@@ -83,6 +83,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
 .form{display:flex;flex-direction:column;gap:12px}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--dim)}
 .form input{font:500 18px var(--mono);letter-spacing:.06em;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.form input#tUser,.form input#tPass,.form input#tUrls{font:15px var(--mono);letter-spacing:0}
 .form input#inName{font:16px var(--sans);letter-spacing:0}
 .ctrls{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
 .ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 6px;font-size:14px;display:flex;flex-direction:column;align-items:center;gap:2px;user-select:none;-webkit-user-select:none;touch-action:manipulation}
@@ -117,6 +118,16 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
   <button class="role primary" id="btnCam"><span class="role-t">這支當攝影機</span><span class="dim">放在要看的地方，接上充電器</span></button>
   <button class="role" id="btnView"><span class="role-t">用這支看監視器</span><span class="dim">掃 QR Code，或輸入代碼與 PIN</span></button>
   <div id="recentWrap" class="panel" hidden><div class="lbl">我的攝影機</div><div id="recent"></div></div>
+  <details class="panel" id="adv">
+    <summary style="cursor:pointer">進階連線設定（連不上時用）</summary>
+    <div class="form" style="margin-top:12px">
+      <p class="dim" style="margin:0;font-size:13px">兩支手機若在不同網路（例如一支 Wi-Fi、一支 4G）而連不上，需要 TURN 中繼伺服器。可到 metered.ca 免費註冊取得，兩支手機都要填同一組。</p>
+      <label>TURN 網址（多個用空白分隔）<input id="tUrls" placeholder="turn:xxx.relay.metered.ca:80" autocapitalize="none" spellcheck="false"></label>
+      <label>帳號<input id="tUser" autocapitalize="none" spellcheck="false"></label>
+      <label>密碼<input id="tPass" autocapitalize="none" spellcheck="false"></label>
+      <button class="wide" type="button" id="tSave">儲存並重新整理</button>
+    </div>
+  </details>
   <p class="foot dim">影像以 WebRTC 點對點加密直送，不經雲端儲存</p>
 </section>
 
@@ -198,6 +209,15 @@ const fmtId = id => id.slice(0,3) + '-' + id.slice(3);
 const normId = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 function randId(){ const c = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const a = crypto.getRandomValues(new Uint8Array(6)); for(const x of a) s += c[x % c.length]; return s; }
 function randPin(){ return String(1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000); }
+function iceConfig(){
+  const servers = [
+    { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
+    { urls:'stun:stun.cloudflare.com:3478' }
+  ];
+  const t = store.get('turn', null);
+  if(t && t.urls) servers.push({ urls:t.urls.split(/[\s,]+/).filter(Boolean), username:t.user || '', credential:t.pass || '' });
+  return { iceServers:servers };
+}
 function show(id){ for(const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id; window.scrollTo(0,0); }
 let toastT;
 function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3000); }
@@ -268,14 +288,16 @@ function renderPairing(){
 function createCamPeer(){
   if(!cam.active) return;
   if(!window.Peer){ setPill($('#camState'), '連線元件載入失敗', 'err'); return; }
-  const p = new Peer(PREFIX + store.get('camId'), { debug:1 });
+  const p = new Peer(PREFIX + store.get('camId'), { debug:1, config:iceConfig() });
   cam.peer = p;
   setPill($('#camState'), '連線中', 'warn');
   p.on('open', () => setPill($('#camState'), '待命中', 'on'));
   p.on('connection', conn => {
+    setPill($('#camState'), '有人連線中…', 'warn');
     conn.on('open', () => {
       if(String(conn.metadata?.pin) !== String(store.get('camPin'))){
-        conn.send({ t:'denied' }); setTimeout(() => conn.close(), 600); return;
+        toast('有人輸入了錯誤的 PIN');
+        conn.send({ t:'denied' }); setTimeout(() => conn.close(), 600); updateCamHud(); return;
       }
       cam.viewers.set(conn.peer, { conn, call:null });
       conn.send({ t:'hello' });
@@ -497,17 +519,29 @@ function connectViewer(){
   $('#camName').textContent = vw.name || fmtId(vw.camId).toUpperCase();
   $('#viewEvents').innerHTML = '<li class="empty">尚無事件</li>';
   $('#liveWait').hidden = false; $('#liveWait').textContent = '連線中…';
-  setPill($('#viewState'), '連線中', 'warn');
+  stage('① 連接配對伺服器…');
   ensureViewerPeer().then(openConn);
 }
 
+function stage(msg, cls){
+  setPill($('#viewState'), msg, cls || 'warn');
+  if(!vw.remote){ $('#liveWait').hidden = false; $('#liveWait').textContent = msg; }
+}
+function watchIce(pc, conn, label){
+  if(!pc) return;
+  pc.addEventListener('iceconnectionstatechange', () => {
+    const st = pc.iceConnectionState;
+    if(st === 'checking' && !vw.remote) stage(label + '：建立點對點連線…');
+    if(st === 'failed' && vw.active) scheduleRetry('點對點連線失敗，網路擋住了（請看「進階連線設定」加 TURN）');
+  });
+}
 function ensureViewerPeer(){
   return new Promise(res => {
     const p0 = vw.peer;
     if(p0 && !p0.destroyed && p0.open) return res();
     if(p0 && !p0.destroyed && !p0.disconnected){ p0.once('open', () => res()); return; }
     try{ p0?.destroy(); }catch(e){}
-    const p = new Peer({ debug:1 }); vw.peer = p;
+    const p = new Peer({ debug:1, config:iceConfig() }); vw.peer = p;
     p.on('open', () => res());
     p.on('call', onCamCall);
     p.on('error', e => {
@@ -522,8 +556,14 @@ function ensureViewerPeer(){
 function openConn(){
   if(!vw.active) return;
   const oldc = vw.conn; vw.conn = null; try{ oldc?.close(); }catch(e){}
+  stage('② 尋找攝影機…');
   const conn = vw.peer.connect(PREFIX + vw.camId, { metadata:{ pin:vw.pin }, reliable:true });
   vw.conn = conn;
+  watchIce(conn.peerConnection, conn, '③ 配對');
+  clearTimeout(vw.openT);
+  vw.openT = setTimeout(() => {
+    if(conn === vw.conn && !conn.open && vw.active){ try{ conn.close(); }catch(e){} scheduleRetry('20 秒內連不上攝影機（攝影機沒開，或網路擋住）'); }
+  }, 20000);
   conn.on('data', d => { if(conn === vw.conn) onViewData(d); });
   conn.on('close', () => { if(conn === vw.conn && vw.active) scheduleRetry('連線中斷'); });
   conn.on('error', () => { if(conn === vw.conn && vw.active) scheduleRetry('連線中斷'); });
@@ -531,6 +571,8 @@ function openConn(){
 
 function scheduleRetry(msg){
   if(!vw.active || vw.retryT) return;
+  clearTimeout(vw.openT); clearTimeout(vw.videoT);
+  vw.remote = null;
   setPill($('#viewState'), msg + '，5 秒後重試', 'err');
   $('#liveWait').hidden = false; $('#liveWait').textContent = msg + '，自動重新連線中…';
   try{ vw.call?.close(); }catch(e){} vw.call = null;
@@ -547,9 +589,12 @@ function onCamCall(call){
   try{ vw.call?.close(); }catch(e){}
   vw.call = call;
   call.answer(silentStream());
+  watchIce(call.peerConnection, null, '④ 影像');
+  stage('④ 接收影像中…');
   call.on('stream', rs => {
     vw.remote = rs;
     const v = $('#liveVideo'); v.srcObject = rs; v.play().catch(() => {});
+    clearTimeout(vw.videoT);
     $('#liveWait').hidden = true;
     setPill($('#viewState'), '即時影像', 'on');
     if(vw.micTrack) replaceMic(vw.micTrack);
@@ -566,7 +611,10 @@ function onViewData(d){
       setPill($('#viewState'), 'PIN 錯誤', 'err'); toast('PIN 錯誤，請到攝影機那支手機確認');
       break;
     case 'hello':
-      saveRecent(); $('#liveWait').textContent = '已配對，等待影像…'; setPill($('#viewState'), '已配對', 'warn'); break;
+      clearTimeout(vw.openT); saveRecent(); stage('③ 已配對，等待影像…');
+      clearTimeout(vw.videoT);
+      vw.videoT = setTimeout(() => { if(vw.active && !vw.remote) scheduleRetry('已配對但收不到影像（網路限制，請設定 TURN）'); }, 25000);
+      break;
     case 'status': applyStatus(d); break;
     case 'events': (d.list || []).forEach(ev => addEventItem($('#viewEvents'), ev, false)); break;
     case 'motion_evt': onMotionEvt(d.ev); break;
@@ -670,7 +718,7 @@ $('#mSens').oninput = () => $('#mSensTxt').textContent = $('#mSens').value;
 $('#mSens').onchange = sendMotion;
 
 function teardownViewer(){
-  clearTimeout(vw.retryT); vw.retryT = null;
+  clearTimeout(vw.retryT); vw.retryT = null; clearTimeout(vw.openT); clearTimeout(vw.videoT);
   if(vw.recorder) vw.recorder.stop();
   try{ vw.call?.close(); }catch(e){} vw.call = null;
   const c = vw.conn; vw.conn = null; try{ c?.close(); }catch(e){}
@@ -691,6 +739,13 @@ setInterval(() => {
 /* ---------- 啟動 ---------- */
 (function init(){
   renderRecent();
+  const t = store.get('turn', null);
+  if(t){ $('#tUrls').value = t.urls || ''; $('#tUser').value = t.user || ''; $('#tPass').value = t.pass || ''; }
+  $('#tSave').onclick = () => {
+    const urls = $('#tUrls').value.trim();
+    store.set('turn', urls ? { urls, user:$('#tUser').value.trim(), pass:$('#tPass').value.trim() } : null);
+    location.reload();
+  };
   if(!window.isSecureContext) toast('請用 https 開啟，否則無法使用相機');
   const q = new URLSearchParams(location.search);
   const id = normId(q.get('cam') || ''), pin = q.get('pin') || '';
