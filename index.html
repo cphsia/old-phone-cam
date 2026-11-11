@@ -125,6 +125,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
       <label>TURN 網址（多個用空白分隔）<input id="tUrls" placeholder="turn:xxx.relay.metered.ca:80" autocapitalize="none" spellcheck="false"></label>
       <label>帳號<input id="tUser" autocapitalize="none" spellcheck="false"></label>
       <label>密碼<input id="tPass" autocapitalize="none" spellcheck="false"></label>
+      <p class="dim" id="tSrc" style="margin:0;font-size:13px"></p>
       <button class="wide" type="button" id="tSave">儲存並重新整理</button>
     </div>
   </details>
@@ -209,6 +210,17 @@ const fmtId = id => id.slice(0,3) + '-' + id.slice(3);
 const normId = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
 function randId(){ const c = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const a = crypto.getRandomValues(new Uint8Array(6)); for(const x of a) s += c[x % c.length]; return s; }
 function randPin(){ return String(1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000); }
+/* TURN 來源優先順序：手機上的「進階連線設定」 > 網站上的 turn.json */
+let fileTurn = null;
+async function loadTurnFile(){
+  try{
+    const r = await fetch('turn.json', { cache:'no-store' });
+    if(!r.ok) return;
+    const j = await r.json();
+    const urls = Array.isArray(j.urls) ? j.urls : String(j.urls || '').split(/[\s,]+/);
+    if(urls.filter(Boolean).length) fileTurn = { urls:urls.filter(Boolean), username:j.username || '', credential:j.credential || '' };
+  }catch(e){}
+}
 function iceConfig(){
   const servers = [
     { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
@@ -216,6 +228,7 @@ function iceConfig(){
   ];
   const t = store.get('turn', null);
   if(t && t.urls) servers.push({ urls:t.urls.split(/[\s,]+/).filter(Boolean), username:t.user || '', credential:t.pass || '' });
+  else if(fileTurn) servers.push(fileTurn);
   return { iceServers:servers };
 }
 function show(id){ for(const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id; window.scrollTo(0,0); }
@@ -737,10 +750,12 @@ setInterval(() => {
 }, 1000);
 
 /* ---------- 啟動 ---------- */
-(function init(){
+(async function init(){
   renderRecent();
+  await loadTurnFile();
   const t = store.get('turn', null);
   if(t){ $('#tUrls').value = t.urls || ''; $('#tUser').value = t.user || ''; $('#tPass').value = t.pass || ''; }
+  $('#tSrc').textContent = store.get('turn', null) ? '目前使用：這支手機上填的設定' : fileTurn ? '目前使用：網站上的 turn.json（欄位留空即可）' : '目前沒有 TURN 設定';
   $('#tSave').onclick = () => {
     const urls = $('#tUrls').value.trim();
     store.set('turn', urls ? { urls, user:$('#tUser').value.trim(), pass:$('#tPass').value.trim() } : null);
