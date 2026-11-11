@@ -70,8 +70,8 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
 
 /* camera */
 .pair{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-.qr{background:#fff;padding:8px;border-radius:10px;width:144px;height:144px;flex:none}
-.qr img,.qr canvas{width:128px!important;height:128px!important}
+.qr{background:#fff;padding:8px;border-radius:10px;width:176px;height:176px;flex:none}
+.qr img,.qr canvas{width:160px!important;height:160px!important}
 .codes{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1}
 .code{font:500 26px var(--mono);letter-spacing:.08em;font-variant-numeric:tabular-nums}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
@@ -83,7 +83,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
 .form{display:flex;flex-direction:column;gap:12px}
 .form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--dim)}
 .form input{font:500 18px var(--mono);letter-spacing:.06em;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
-.form input#tUser,.form input#tPass,.form input#tUrls{font:15px var(--mono);letter-spacing:0}
+.form input#tUser,.form input#tPass,.form textarea#tUrls{font:14px var(--mono);letter-spacing:0;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:vertical;width:100%}
 .form input#inName{font:16px var(--sans);letter-spacing:0}
 .ctrls{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
 .ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 6px;font-size:14px;display:flex;flex-direction:column;align-items:center;gap:2px;user-select:none;-webkit-user-select:none;touch-action:manipulation}
@@ -122,7 +122,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
     <summary style="cursor:pointer">進階連線設定（連不上時用）</summary>
     <div class="form" style="margin-top:12px">
       <p class="dim" style="margin:0;font-size:13px">兩支手機若在不同網路（例如一支 Wi-Fi、一支 4G）而連不上，需要 TURN 中繼伺服器。可到 metered.ca 免費註冊取得，兩支手機都要填同一組。</p>
-      <label>TURN 網址（多個用空白分隔）<input id="tUrls" placeholder="turn:xxx.relay.metered.ca:80" autocapitalize="none" spellcheck="false"></label>
+      <label>TURN 網址（可直接貼上 Metered 的整段 iceServers 程式碼，會自動拆好）<textarea id="tUrls" rows="3" placeholder="turn:global.relay.metered.ca:80 …" autocapitalize="none" spellcheck="false"></textarea></label>
       <label>帳號<input id="tUser" autocapitalize="none" spellcheck="false"></label>
       <label>密碼<input id="tPass" autocapitalize="none" spellcheck="false"></label>
       <p class="dim" id="tSrc" style="margin:0;font-size:13px"></p>
@@ -221,6 +221,21 @@ async function loadTurnFile(){
     if(urls.filter(Boolean).length) fileTurn = { urls:urls.filter(Boolean), username:j.username || '', credential:j.credential || '' };
   }catch(e){}
 }
+/* 從貼上的文字（Metered 程式碼、JSON 或單純網址）拆出 TURN 設定 */
+function parseTurnText(txt){
+  const urls = [...new Set((txt.match(/turns?:[^\s"'`,\]\}]+/g) || []))];
+  const user = (txt.match(/username["']?\s*[:=]\s*["'`]([^"'`]+)/) || [])[1] || '';
+  const pass = (txt.match(/credential["']?\s*[:=]\s*["'`]([^"'`]+)/) || [])[1] || '';
+  return { urls, user, pass };
+}
+function currentTurn(){
+  const t = store.get('turn', null);
+  if(t && t.urls) return t;
+  if(fileTurn) return { urls:fileTurn.urls.join(' '), user:fileTurn.username, pass:fileTurn.credential };
+  return null;
+}
+const b64e = s => btoa(unescape(encodeURIComponent(s)));
+const b64d = s => decodeURIComponent(escape(atob(s)));
 function iceConfig(){
   const servers = [
     { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
@@ -292,9 +307,11 @@ function renderPairing(){
   const id = store.get('camId'), pin = store.get('camPin');
   $('#camIdTxt').textContent = fmtId(id).toUpperCase();
   $('#camPinTxt').textContent = pin;
-  const url = location.origin + location.pathname + '?cam=' + id + '&pin=' + pin;
+  let url = location.origin + location.pathname + '?cam=' + id + '&pin=' + pin;
+  const t = currentTurn();
+  if(t) url += '#t=' + b64e(JSON.stringify({ u:t.urls, n:t.user, p:t.pass }));
   const q = $('#qr'); q.innerHTML = '';
-  if(window.QRCode) new QRCode(q, { text:url, width:128, height:128, correctLevel:QRCode.CorrectLevel.M });
+  if(window.QRCode) new QRCode(q, { text:url, width:160, height:160, correctLevel:QRCode.CorrectLevel.L });
   else q.textContent = url;
 }
 
@@ -752,7 +769,28 @@ setInterval(() => {
 /* ---------- 啟動 ---------- */
 (async function init(){
   renderRecent();
+  const hm = location.hash.match(/[#&]t=([^&]+)/);
+  if(hm){
+    try{
+      const j = JSON.parse(b64d(decodeURIComponent(hm[1])));
+      if(j.u){ store.set('turn', { urls:j.u, user:j.n || '', pass:j.p || '' }); toast('已從 QR Code 自動填入 TURN 設定'); }
+    }catch(e){}
+  }
   await loadTurnFile();
+  const autoFill = () => {
+    const raw = $('#tUrls').value;
+    if(!/username|credential|[\[{"'`]|\n/.test(raw)) return;
+    const r = parseTurnText(raw);
+    if(!r.urls.length) return;
+    $('#tUrls').value = r.urls.join(' ');
+    if(r.user) $('#tUser').value = r.user;
+    if(r.pass) $('#tPass').value = r.pass;
+    toast(`已自動填入 ${r.urls.length} 個 TURN 網址` + (r.user ? '、帳號與密碼' : ''));
+  };
+  $('#tUrls').addEventListener('paste', () => setTimeout(autoFill, 0));
+  $('#tUrls').addEventListener('change', autoFill);
+  $('#tUser').addEventListener('paste', e => { const v = e.clipboardData?.getData('text') || ''; if(/credential|turns?:/.test(v)){ e.preventDefault(); $('#tUrls').value = v; autoFill(); } });
+  $('#tPass').addEventListener('paste', e => { const v = e.clipboardData?.getData('text') || ''; if(/credential|turns?:/.test(v)){ e.preventDefault(); $('#tUrls').value = v; autoFill(); } });
   const t = store.get('turn', null);
   if(t){ $('#tUrls').value = t.urls || ''; $('#tUser').value = t.user || ''; $('#tPass').value = t.pass || ''; }
   $('#tSrc').textContent = store.get('turn', null) ? '目前使用：這支手機上填的設定' : fileTurn ? '目前使用：網站上的 turn.json（欄位留空即可）' : '目前沒有 TURN 設定';
