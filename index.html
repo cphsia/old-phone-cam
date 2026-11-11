@@ -126,7 +126,8 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
       <label>帳號<input id="tUser" autocapitalize="none" spellcheck="false"></label>
       <label>密碼<input id="tPass" autocapitalize="none" spellcheck="false"></label>
       <p class="dim" id="tSrc" style="margin:0;font-size:13px"></p>
-      <button class="wide" type="button" id="tSave">儲存並重新整理</button>
+      <span id="tStatus" class="pill" style="align-self:flex-start;white-space:normal">尚未測試</span>
+      <div class="row"><button class="wide" type="button" id="tTest" style="flex:1">測試登入</button><button class="wide primary" type="button" id="tSave" style="flex:1">儲存並重新整理</button></div>
     </div>
   </details>
   <p class="foot dim">影像以 WebRTC 點對點加密直送，不經雲端儲存</p>
@@ -146,6 +147,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
     </div>
   </div>
   <div class="panel">
+    <div class="row" style="margin-bottom:10px"><span class="dim" style="font-size:13px">TURN 中繼</span><span id="camTurn" class="pill" style="white-space:normal">檢查中…</span></div>
     <label class="check"><input type="checkbox" id="camAuto">開啟網頁時自動進入攝影機模式（停電重開機後免手動）</label>
   </div>
   <div class="panel"><div class="lbl">移動偵測紀錄</div><ul id="camEvents" class="evlist"><li class="empty">尚無事件</li></ul></div>
@@ -165,7 +167,7 @@ h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
   <div id="live" hidden style="display:flex;flex-direction:column;gap:14px">
     <div class="stage" id="liveStage"><video id="liveVideo" autoplay playsinline muted></video>
       <div id="liveWait" class="wait">等待影像…</div>
-      <div class="hud"><span id="camName"></span><span id="recBadge" hidden>● REC 00:00</span><span id="vBatt"></span><span id="clock" class="r"></span></div>
+      <div class="hud"><span id="camName"></span><span id="recBadge" hidden>● REC 00:00</span><span id="vBatt"></span><span id="route" hidden></span><span id="clock" class="r"></span></div>
     </div>
     <div class="ctrls">
       <button class="ctl" id="cSound" aria-pressed="false">聲音<small>已靜音</small></button>
@@ -236,6 +238,41 @@ function currentTurn(){
 }
 const b64e = s => btoa(unescape(encodeURIComponent(s)));
 const b64d = s => decodeURIComponent(escape(atob(s)));
+/* 真的向 TURN 伺服器要一個中繼位址：拿得到 = 登入成功 */
+function testTurn(t){
+  return new Promise(res => {
+    if(!t || !t.urls) return res({ ok:null, msg:'未設定 TURN（只能在同網路或一般網路下直連）' });
+    const urls = String(t.urls).split(/[\s,]+/).filter(Boolean);
+    let pc;
+    try{ pc = new RTCPeerConnection({ iceServers:[{ urls, username:t.user || '', credential:t.pass || '' }], iceTransportPolicy:'relay' }); }
+    catch(e){ return res({ ok:false, msg:'TURN 網址格式錯誤' }); }
+    let done = false, auth = false, reach = false;
+    const finish = r => { if(done) return; done = true; clearTimeout(to); try{ pc.close(); }catch(e){} res(r); };
+    const fail = () => finish(auth ? { ok:false, msg:'TURN 登入失敗：帳號或密碼錯誤' }
+      : reach ? { ok:false, msg:'TURN 伺服器有回應但無法取得中繼' } : { ok:false, msg:'連不到 TURN 伺服器（網址錯誤或網路擋住）' });
+    pc.onicecandidate = e => {
+      if(e.candidate && / typ relay /.test(e.candidate.candidate)) finish({ ok:true, msg:'TURN 登入成功，可跨網路中繼' });
+      else if(!e.candidate) fail();
+    };
+    pc.onicecandidateerror = e => { if(e.errorCode === 401 || e.errorCode === 403 || e.errorCode === 441) auth = true; else if(e.errorCode && e.errorCode !== 701) reach = true; };
+    const to = setTimeout(fail, 10000);
+    pc.createDataChannel('turn-test');
+    pc.createOffer().then(o => pc.setLocalDescription(o)).catch(fail);
+  });
+}
+let turnResult = null;
+function showTurnResult(r){
+  turnResult = r;
+  const cls = r.ok === true ? 'on' : r.ok === false ? 'err' : '';
+  for(const id of ['#tStatus','#camTurn']){ const el = $(id); if(el) setPill(el, r.msg, cls); }
+}
+async function runTurnTest(t, announce){
+  for(const id of ['#tStatus','#camTurn']){ const el = $(id); if(el) setPill(el, 'TURN 測試中…', 'warn'); }
+  const r = await testTurn(t);
+  showTurnResult(r);
+  if(r.ok === false || (announce && r.ok)) toast(r.msg);
+  return r;
+}
 function iceConfig(){
   const servers = [
     { urls:['stun:stun.l.google.com:19302','stun:stun1.l.google.com:19302'] },
@@ -627,11 +664,29 @@ function onCamCall(call){
     clearTimeout(vw.videoT);
     $('#liveWait').hidden = true;
     setPill($('#viewState'), '即時影像', 'on');
+    setTimeout(() => showRoute(call), 2500);
     if(vw.micTrack) replaceMic(vw.micTrack);
   });
   call.on('close', () => { if(call === vw.call && vw.active) scheduleRetry('影像中斷'); });
 }
 
+async function showRoute(call){
+  const pc = call?.peerConnection; if(!pc || call !== vw.call) return;
+  try{
+    const st = await pc.getStats(); let pair = null; const cands = {};
+    st.forEach(r => {
+      if(r.type === 'transport' && r.selectedCandidatePairId) pair = st.get(r.selectedCandidatePairId);
+      if(r.type === 'local-candidate') cands[r.id] = r;
+    });
+    if(!pair) st.forEach(r => { if(r.type === 'candidate-pair' && r.state === 'succeeded' && (r.nominated || r.selected)) pair = pair || r; });
+    const lc = pair && cands[pair.localCandidateId];
+    if(!lc) return;
+    const relay = lc.candidateType === 'relay';
+    $('#route').hidden = false;
+    $('#route').textContent = relay ? '經 TURN 中繼' : '直連';
+    setPill($('#viewState'), relay ? '即時影像（TURN 中繼）' : '即時影像（直連）', 'on');
+  }catch(e){}
+}
 function onViewData(d){
   if(!d || typeof d !== 'object') return;
   switch(d.t){
@@ -793,10 +848,17 @@ setInterval(() => {
   $('#tPass').addEventListener('paste', e => { const v = e.clipboardData?.getData('text') || ''; if(/credential|turns?:/.test(v)){ e.preventDefault(); $('#tUrls').value = v; autoFill(); } });
   const t = store.get('turn', null);
   if(t){ $('#tUrls').value = t.urls || ''; $('#tUser').value = t.user || ''; $('#tPass').value = t.pass || ''; }
+  $('#tTest').onclick = () => {
+    let urls = $('#tUrls').value.trim(), user = $('#tUser').value.trim(), pass = $('#tPass').value.trim();
+    runTurnTest(urls ? { urls, user, pass } : currentTurn(), true);
+  };
+  const justSaved = store.get('turnJustSaved', false); store.set('turnJustSaved', false);
+  runTurnTest(currentTurn(), !!hm || justSaved);
   $('#tSrc').textContent = store.get('turn', null) ? '目前使用：這支手機上填的設定' : fileTurn ? '目前使用：網站上的 turn.json（欄位留空即可）' : '目前沒有 TURN 設定';
   $('#tSave').onclick = () => {
     const urls = $('#tUrls').value.trim();
     store.set('turn', urls ? { urls, user:$('#tUser').value.trim(), pass:$('#tPass').value.trim() } : null);
+    store.set('turnJustSaved', true);
     location.reload();
   };
   if(!window.isSecureContext) toast('請用 https 開啟，否則無法使用相機');
