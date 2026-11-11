@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d141c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>舊機監視器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* 夜間監控台：深藍黑底、琥珀色作為「有事發生」的唯一強調色，紅色只給錄影 */
+:root{
+  --bg:#0d141c; --panel:#142030; --panel2:#1a2a3d; --line:#26394f;
+  --fg:#e7eef5; --dim:#8ea3b8; --accent:#f2b84b; --rec:#ef5a4f; --ok:#4fc38a;
+  --sans:"Noto Sans TC",system-ui,-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--fg);font:15px/1.55 var(--sans);-webkit-tap-highlight-color:transparent}
+[hidden]{display:none!important}
+button{font:inherit;color:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.screen{min-height:100%;max-width:760px;margin:0 auto;display:flex;flex-direction:column;gap:14px;
+  padding-block:max(16px,env(safe-area-inset-top)) max(20px,env(safe-area-inset-bottom));
+  padding-left:max(16px,env(safe-area-inset-left));padding-right:max(16px,env(safe-area-inset-right))}
+h1{font-size:24px;margin:0;letter-spacing:.02em;text-wrap:balance}
+.dim{color:var(--dim)}
+.lbl{font-size:12px;color:var(--dim);letter-spacing:.08em;margin-bottom:6px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px}
+
+/* home */
+.brand{display:flex;gap:14px;align-items:center;padding-block:18px 6px}
+.lens{width:52px;height:52px;border-radius:50%;flex:none;background:radial-gradient(circle at 38% 36%,#4b6a8a 0 10%,#1b2a3b 11% 46%,#0a1018 47% 60%,var(--line) 61% 100%);box-shadow:0 0 0 3px var(--panel2)}
+.brand p{margin:2px 0 0}
+.role{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 18px}
+.role:hover{border-color:var(--dim)}
+.role-t{font-size:19px;font-weight:700}
+.role.primary{background:linear-gradient(180deg,#22344a,var(--panel));border-color:#36506b}
+.recent-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-top:1px solid var(--line)}
+.recent-item:first-of-type{border-top:0}
+.recent-item .go{flex:1;display:flex;flex-direction:column;align-items:flex-start;background:none;border:0;padding:0;text-align:left}
+.recent-item .go b{font-weight:500}
+.recent-item .x{background:none;border:0;color:var(--dim);padding:6px 10px;font-size:18px}
+.foot{font-size:12px;text-align:center;margin-top:auto}
+
+/* shared */
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.ghost{background:transparent;border:1px solid var(--line);border-radius:10px;padding:7px 14px}
+.ghost.sm{padding:5px 10px;font-size:13px}
+.pill{font-size:13px;padding:5px 12px;border-radius:999px;background:var(--panel2);color:var(--dim);display:inline-flex;align-items:center;gap:7px}
+.pill::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.pill.on{color:var(--ok)}.pill.on::before{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.pill.warn{color:var(--accent)}.pill.warn::before{background:var(--accent)}
+.pill.err{color:var(--rec)}.pill.err::before{background:var(--rec)}
+.stage{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:16/9;max-width:100%}
+.stage video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+.stage.night video{filter:brightness(1.9) contrast(1.35) grayscale(1)}
+.hud{position:absolute;inset:10px 10px auto 10px;display:flex;flex-wrap:wrap;gap:6px;pointer-events:none}
+.hud span{font:12px var(--mono);background:rgba(0,0,0,.55);color:#fff;padding:3px 8px;border-radius:6px;font-variant-numeric:tabular-nums}
+.hud .r{margin-left:auto}
+#recBadge{color:#fff;background:var(--rec)}
+.wait{position:absolute;inset:0;display:grid;place-items:center;color:var(--dim);font-size:14px}
+.wide{width:100%;padding:13px;border-radius:12px;border:1px solid var(--line);background:var(--panel2)}
+.wide.primary{background:var(--accent);color:#1b1305;border-color:var(--accent);font-weight:700}
+
+/* camera */
+.pair{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.qr{background:#fff;padding:8px;border-radius:10px;width:144px;height:144px;flex:none}
+.qr img,.qr canvas{width:128px!important;height:128px!important}
+.codes{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1}
+.code{font:500 26px var(--mono);letter-spacing:.08em;font-variant-numeric:tabular-nums}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.check{display:flex;gap:10px;align-items:center;font-size:14px}
+.check input{width:18px;height:18px;accent-color:var(--accent)}
+#dim{position:fixed;inset:0;background:#000;z-index:50;display:grid;place-items:end center;padding-bottom:max(30px,env(safe-area-inset-bottom));color:#333;font-size:13px}
+
+/* viewer */
+.form{display:flex;flex-direction:column;gap:12px}
+.form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--dim)}
+.form input{font:500 18px var(--mono);letter-spacing:.06em;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+.form input#inName{font:16px var(--sans);letter-spacing:0}
+.ctrls{display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:8px}
+.ctl{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 6px;font-size:14px;display:flex;flex-direction:column;align-items:center;gap:2px;user-select:none;-webkit-user-select:none;touch-action:manipulation}
+.ctl small{font-size:11px;color:var(--dim)}
+.ctl[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);background:#2a2516}
+.ctl.rec[aria-pressed="true"]{border-color:var(--rec);color:var(--rec);background:#2c1717}
+.ctl.talk.active{background:var(--accent);color:#1b1305;border-color:var(--accent)}
+.motion-row{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.motion-row input[type=range]{flex:1;min-width:140px;accent-color:var(--accent)}
+.sens{font:13px var(--mono);color:var(--dim);min-width:3ch}
+.evlist{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto}
+.evlist li{display:flex;gap:12px;align-items:center}
+.evlist img{width:96px;aspect-ratio:4/3;object-fit:cover;border-radius:8px;background:#000;cursor:zoom-in;flex:none}
+.evlist b{font:500 14px var(--mono);font-variant-numeric:tabular-nums;display:block}
+.evlist .empty{color:var(--dim);font-size:13px}
+.evlist .new b{color:var(--accent)}
+#lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:60;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:max(16px,env(safe-area-inset-left))}
+#lightbox img{max-width:100%;max-height:75vh;border-radius:10px}
+#toast{position:fixed;left:50%;bottom:max(24px,env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 16px;border-radius:10px;z-index:70;max-width:calc(100% - 32px);font-size:14px;transition:opacity .25s;opacity:0;pointer-events:none}
+#toast.show{opacity:1}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- 首頁 -->
+<section id="home" class="screen">
+  <header class="brand">
+    <div class="lens" aria-hidden="true"></div>
+    <div><h1>舊機監視器</h1><p class="dim">把舊手機變成遠端監視器，免裝 App、免註冊</p></div>
+  </header>
+  <button class="role primary" id="btnCam"><span class="role-t">這支當攝影機</span><span class="dim">放在要看的地方，接上充電器</span></button>
+  <button class="role" id="btnView"><span class="role-t">用這支看監視器</span><span class="dim">掃 QR Code，或輸入代碼與 PIN</span></button>
+  <div id="recentWrap" class="panel" hidden><div class="lbl">我的攝影機</div><div id="recent"></div></div>
+  <p class="foot dim">影像以 WebRTC 點對點加密直送，不經雲端儲存</p>
+</section>
+
+<!-- 攝影機模式 -->
+<section id="cam" class="screen" hidden>
+  <div class="topbar"><button class="ghost" id="camBack">結束</button><span id="camState" class="pill">啟動中</span></div>
+  <div class="stage"><video id="camPreview" autoplay playsinline muted></video>
+    <div class="hud"><span id="camViewers">0 人觀看</span><span id="camMotionHud">移動偵測 開</span><span id="camBatt" class="r"></span></div>
+  </div>
+  <div class="panel pair">
+    <div id="qr" class="qr" aria-label="配對 QR Code"></div>
+    <div class="codes">
+      <div><div class="lbl">攝影機代碼</div><div id="camIdTxt" class="code">———</div></div>
+      <div class="row"><div><div class="lbl">PIN</div><div id="camPinTxt" class="code">····</div></div><button class="ghost sm" id="newPin">換 PIN</button></div>
+    </div>
+  </div>
+  <div class="panel">
+    <label class="check"><input type="checkbox" id="camAuto">開啟網頁時自動進入攝影機模式（停電重開機後免手動）</label>
+  </div>
+  <div class="panel"><div class="lbl">移動偵測紀錄</div><ul id="camEvents" class="evlist"><li class="empty">尚無事件</li></ul></div>
+  <button class="wide" id="dimBtn">黑屏省電（點兩下恢復）</button>
+</section>
+<div id="dim" hidden>點兩下恢復畫面</div>
+
+<!-- 觀看模式 -->
+<section id="view" class="screen" hidden>
+  <div class="topbar"><button class="ghost" id="viewBack">返回</button><span id="viewState" class="pill">未連線</span></div>
+  <form id="connForm" class="panel form" autocomplete="off">
+    <label>攝影機代碼<input id="inId" placeholder="例：k7m-2qa" autocapitalize="none" spellcheck="false" required></label>
+    <label>PIN<input id="inPin" inputmode="numeric" maxlength="4" placeholder="4 位數" required></label>
+    <label>名稱（選填）<input id="inName" placeholder="例：客廳、店門口"></label>
+    <button class="wide primary" type="submit">連線</button>
+  </form>
+  <div id="live" hidden style="display:flex;flex-direction:column;gap:14px">
+    <div class="stage" id="liveStage"><video id="liveVideo" autoplay playsinline muted></video>
+      <div id="liveWait" class="wait">等待影像…</div>
+      <div class="hud"><span id="camName"></span><span id="recBadge" hidden>● REC 00:00</span><span id="vBatt"></span><span id="clock" class="r"></span></div>
+    </div>
+    <div class="ctrls">
+      <button class="ctl" id="cSound" aria-pressed="false">聲音<small>已靜音</small></button>
+      <button class="ctl talk" id="cTalk">對講<small>按住說話</small></button>
+      <button class="ctl rec" id="cRec" aria-pressed="false">錄影<small>存到這支</small></button>
+      <button class="ctl" id="cShot">截圖</button>
+      <button class="ctl" id="cFlip">切換鏡頭</button>
+      <button class="ctl" id="cTorch" aria-pressed="false">手電筒</button>
+      <button class="ctl" id="cNight" aria-pressed="false">夜視增強</button>
+      <button class="ctl" id="cSiren" aria-pressed="false">警報器</button>
+      <button class="ctl" id="cFull">全螢幕</button>
+    </div>
+    <div class="panel">
+      <div class="motion-row">
+        <label class="check"><input type="checkbox" id="mOn" checked>移動偵測</label>
+        <span class="dim" style="font-size:13px">靈敏度</span>
+        <input type="range" id="mSens" min="10" max="95" value="50" aria-label="靈敏度">
+        <span id="mSensTxt" class="sens">50</span>
+      </div>
+    </div>
+    <div class="panel"><div class="lbl">移動偵測事件</div><ul id="viewEvents" class="evlist"><li class="empty">尚無事件</li></ul></div>
+  </div>
+</section>
+
+<div id="lightbox" hidden><img id="lbImg" alt="移動偵測截圖"><div class="row"><button class="ghost" id="lbSave">儲存</button><button class="ghost" id="lbClose">關閉</button></div></div>
+<div id="toast" role="status"></div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+const PREFIX = 'oldphonecam-v1-';
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+const pad = n => String(n).padStart(2, '0');
+const hhmmss = t => { const d = new Date(t); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.getMonth()+1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`; };
+const fmtId = id => id.slice(0,3) + '-' + id.slice(3);
+const normId = s => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+function randId(){ const c = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; const a = crypto.getRandomValues(new Uint8Array(6)); for(const x of a) s += c[x % c.length]; return s; }
+function randPin(){ return String(1000 + crypto.getRandomValues(new Uint16Array(1))[0] % 9000); }
+function show(id){ for(const s of document.querySelectorAll('.screen')) s.hidden = s.id !== id; window.scrollTo(0,0); }
+let toastT;
+function toast(msg){ const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 3000); }
+function setPill(el, text, cls){ el.textContent = text; el.className = 'pill' + (cls ? ' ' + cls : ''); }
+function download(blob, name){ const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 4000); }
+function dataUrlToBlob(u){ const [h, b] = u.split(','); const bin = atob(b); const arr = new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i] = bin.charCodeAt(i); return new Blob([arr], {type: h.match(/:(.*?);/)[1]}); }
+
+/* ---------- 事件清單（兩端共用） ---------- */
+function addEventItem(listEl, ev, isNew){
+  const empty = listEl.querySelector('.empty'); if(empty) empty.remove();
+  const li = document.createElement('li'); if(isNew) li.className = 'new';
+  const img = document.createElement('img'); img.src = ev.img; img.alt = '移動偵測截圖';
+  img.onclick = () => openLightbox(ev);
+  const d = document.createElement('div');
+  d.innerHTML = `<b>${hhmmss(ev.time)}</b><span class="dim" style="font-size:13px">${new Date(ev.time).toLocaleDateString('zh-TW')}　變動 ${ev.pct}%</span>`;
+  li.append(img, d); listEl.prepend(li);
+  while(listEl.children.length > 40) listEl.lastChild.remove();
+}
+let lbEv = null;
+function openLightbox(ev){ lbEv = ev; $('#lbImg').src = ev.img; $('#lightbox').hidden = false; }
+$('#lbClose').onclick = () => $('#lightbox').hidden = true;
+$('#lightbox').onclick = e => { if(e.target.id === 'lightbox') $('#lightbox').hidden = true; };
+$('#lbSave').onclick = () => { if(lbEv) download(dataUrlToBlob(lbEv.img), `移動偵測_${stamp()}.jpg`); };
+
+/* =========================================================
+   攝影機模式
+   ========================================================= */
+const cam = { active:false, peer:null, stream:null, facing:'environment', viewers:new Map(), talk:new Map(),
+  motion:{ on:true, sens:50 }, events:[], ac:null, wake:null, torch:false, battery:null, loopT:null, sirenStop:null };
+
+async function getCamStream(){
+  return navigator.mediaDevices.getUserMedia({
+    video:{ facingMode:cam.facing, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:20} },
+    audio:{ echoCancellation:true, noiseSuppression:true }
+  });
+}
+
+async function startCamera(){
+  if(!navigator.mediaDevices?.getUserMedia){ toast('此瀏覽器不支援相機，請用 Chrome / Safari 並以 https 開啟'); return; }
+  try{ cam.ac = cam.ac || new (window.AudioContext || window.webkitAudioContext)(); cam.ac.resume?.(); }catch(e){}
+  try{ cam.stream = await getCamStream(); }
+  catch(e){ toast('無法開啟相機：' + (e.name === 'NotAllowedError' ? '請允許相機與麥克風權限' : e.message)); return; }
+  cam.active = true;
+  cam.motion = store.get('camMotion', { on:true, sens:50 });
+  $('#camPreview').srcObject = cam.stream;
+  let id = store.get('camId'); if(!id){ id = randId(); store.set('camId', id); }
+  let pin = store.get('camPin'); if(!pin){ pin = randPin(); store.set('camPin', pin); }
+  $('#camAuto').checked = !!store.get('camAuto', false);
+  renderPairing();
+  show('cam');
+  createCamPeer();
+  requestWake();
+  startMotionLoop();
+  updateCamHud();
+  if(navigator.getBattery){ try{ const b = await navigator.getBattery(); cam.battery = b; const f = () => { updateCamHud(); broadcastStatus(); }; b.onlevelchange = f; b.onchargingchange = f; }catch(e){} }
+}
+
+function renderPairing(){
+  const id = store.get('camId'), pin = store.get('camPin');
+  $('#camIdTxt').textContent = fmtId(id).toUpperCase();
+  $('#camPinTxt').textContent = pin;
+  const url = location.origin + location.pathname + '?cam=' + id + '&pin=' + pin;
+  const q = $('#qr'); q.innerHTML = '';
+  if(window.QRCode) new QRCode(q, { text:url, width:128, height:128, correctLevel:QRCode.CorrectLevel.M });
+  else q.textContent = url;
+}
+
+function createCamPeer(){
+  if(!cam.active) return;
+  if(!window.Peer){ setPill($('#camState'), '連線元件載入失敗', 'err'); return; }
+  const p = new Peer(PREFIX + store.get('camId'), { debug:1 });
+  cam.peer = p;
+  setPill($('#camState'), '連線中', 'warn');
+  p.on('open', () => setPill($('#camState'), '待命中', 'on'));
+  p.on('connection', conn => {
+    conn.on('open', () => {
+      if(String(conn.metadata?.pin) !== String(store.get('camPin'))){
+        conn.send({ t:'denied' }); setTimeout(() => conn.close(), 600); return;
+      }
+      cam.viewers.set(conn.peer, { conn, call:null });
+      conn.send({ t:'hello' });
+      conn.send({ t:'events', list:cam.events.slice(-10) });
+      sendStatus(conn);
+      callViewer(conn.peer);
+      updateCamHud();
+    });
+    conn.on('data', d => handleCamCmd(d, conn));
+    conn.on('close', () => dropViewer(conn.peer));
+    conn.on('error', () => dropViewer(conn.peer));
+  });
+  p.on('disconnected', () => { setPill($('#camState'), '重新連線中', 'warn'); setTimeout(() => { if(!p.destroyed && cam.peer === p) p.reconnect(); }, 3000); });
+  p.on('error', e => {
+    if(e.type === 'peer-unavailable') return;
+    if(e.type === 'unavailable-id') setPill($('#camState'), '代碼仍被佔用，稍後重試', 'warn');
+    else setPill($('#camState'), '網路異常，重試中', 'err');
+    if(['unavailable-id','network','server-error','socket-error','socket-closed'].includes(e.type)){
+      try{ p.destroy(); }catch(_){}
+      setTimeout(() => { if(cam.active && cam.peer === p) createCamPeer(); }, 5000);
+    }
+  });
+}
+
+function callViewer(peerId){
+  const v = cam.viewers.get(peerId); if(!v || !cam.stream) return;
+  const call = cam.peer.call(peerId, cam.stream);
+  v.call = call;
+  call.on('stream', s => playTalk(peerId, s));
+  call.on('close', () => stopTalk(peerId));
+}
+function playTalk(peerId, s){
+  let a = cam.talk.get(peerId);
+  if(!a){ a = document.createElement('audio'); a.autoplay = true; document.body.appendChild(a); cam.talk.set(peerId, a); }
+  a.srcObject = s; a.play().catch(() => {});
+}
+function stopTalk(peerId){ const a = cam.talk.get(peerId); if(a){ a.srcObject = null; a.remove(); cam.talk.delete(peerId); } }
+function dropViewer(peerId){
+  const v = cam.viewers.get(peerId); if(!v) return;
+  try{ v.call?.close(); }catch(e){}
+  cam.viewers.delete(peerId); stopTalk(peerId); updateCamHud();
+}
+
+function camStatus(){
+  return { t:'status', motion:cam.motion, facing:cam.facing, torch:cam.torch, siren:!!cam.sirenStop,
+    battery: cam.battery ? { level:Math.round(cam.battery.level * 100), charging:cam.battery.charging } : null };
+}
+function sendStatus(conn){ try{ conn.send(camStatus()); }catch(e){} }
+function broadcast(msg){ for(const v of cam.viewers.values()){ try{ if(v.conn.open) v.conn.send(msg); }catch(e){} } }
+function broadcastStatus(){ broadcast(camStatus()); }
+
+function updateCamHud(){
+  $('#camViewers').textContent = cam.viewers.size + ' 人觀看';
+  $('#camMotionHud').textContent = '移動偵測 ' + (cam.motion.on ? '開' : '關');
+  const b = cam.battery; $('#camBatt').textContent = b ? `電量 ${Math.round(b.level*100)}%${b.charging ? ' 充電中' : ''}` : '';
+  if(cam.peer?.open) setPill($('#camState'), cam.viewers.size ? '觀看中' : '待命中', 'on');
+}
+
+async function handleCamCmd(d, conn){
+  if(!cam.viewers.has(conn.peer) || !d || typeof d !== 'object') return;
+  switch(d.t){
+    case 'flip': await flipCamera(); break;
+    case 'torch': await setTorch(!!d.on, conn); break;
+    case 'siren': d.on ? startSiren() : stopSiren(); break;
+    case 'motion':
+      cam.motion = { on:!!d.on, sens:Math.max(10, Math.min(95, +d.sens || 50)) };
+      store.set('camMotion', cam.motion); updateCamHud(); break;
+  }
+  broadcastStatus();
+}
+
+async function flipCamera(){
+  const old = cam.stream;
+  cam.facing = cam.facing === 'environment' ? 'user' : 'environment';
+  let ns;
+  try{ old.getVideoTracks().forEach(t => t.stop()); ns = await getCamStream(); }
+  catch(e){ cam.facing = cam.facing === 'environment' ? 'user' : 'environment'; try{ ns = await getCamStream(); }catch(_){ return; } broadcast({ t:'toast', msg:'這支手機只有一顆可用鏡頭' }); }
+  for(const v of cam.viewers.values()){
+    const pc = v.call?.peerConnection; if(!pc) continue;
+    for(const s of pc.getSenders()){
+      const nt = s.track && ns.getTracks().find(t => t.kind === s.track.kind);
+      if(nt) s.replaceTrack(nt).catch(() => {});
+    }
+  }
+  old.getTracks().forEach(t => t.stop());
+  cam.stream = ns; cam.torch = false;
+  $('#camPreview').srcObject = ns;
+}
+
+async function setTorch(on, conn){
+  const tr = cam.stream?.getVideoTracks()[0];
+  const caps = tr?.getCapabilities?.();
+  if(!caps || !('torch' in caps)){ try{ conn.send({ t:'toast', msg:'這支手機或目前鏡頭不支援遠端開手電筒' }); }catch(e){} return; }
+  try{ await tr.applyConstraints({ advanced:[{ torch:on }] }); cam.torch = on; }catch(e){}
+}
+
+function startSiren(){
+  if(cam.sirenStop || !cam.ac) return;
+  cam.ac.resume?.();
+  const ac = cam.ac, o = ac.createOscillator(), g = ac.createGain(), lfo = ac.createOscillator(), lg = ac.createGain();
+  o.type = 'square'; o.frequency.value = 900; lfo.frequency.value = 2.2; lg.gain.value = 350;
+  lfo.connect(lg); lg.connect(o.frequency); g.gain.value = 0.6; o.connect(g); g.connect(ac.destination);
+  o.start(); lfo.start();
+  const t = setTimeout(() => { stopSiren(); broadcastStatus(); }, 30000);
+  cam.sirenStop = () => { clearTimeout(t); try{ o.stop(); lfo.stop(); }catch(e){} cam.sirenStop = null; };
+}
+function stopSiren(){ cam.sirenStop?.(); }
+
+/* 移動偵測：每 0.5 秒把畫面縮成 64×48 灰階，算有多少像素變化 */
+function startMotionLoop(){
+  const v = $('#camPreview');
+  const c = document.createElement('canvas'); c.width = 64; c.height = 48;
+  const ctx = c.getContext('2d', { willReadFrequently:true });
+  let prev = null, last = 0, warm = 0;
+  clearInterval(cam.loopT);
+  cam.loopT = setInterval(() => {
+    if(!cam.active || v.readyState < 2) return;
+    ctx.drawImage(v, 0, 0, 64, 48);
+    const px = ctx.getImageData(0, 0, 64, 48).data;
+    const g = new Uint8Array(64 * 48);
+    for(let i = 0, j = 0; i < px.length; i += 4, j++) g[j] = (px[i] * 3 + px[i+1] * 6 + px[i+2]) / 10;
+    if(prev && cam.motion.on && ++warm > 4){
+      let changed = 0;
+      for(let i = 0; i < g.length; i++) if(Math.abs(g[i] - prev[i]) > 28) changed++;
+      const ratio = changed / g.length;
+      const need = 0.004 + (100 - cam.motion.sens) / 100 * 0.09;
+      const now = Date.now();
+      if(ratio > need && now - last > 15000){ last = now; onMotion(Math.round(ratio * 100)); }
+    }
+    prev = g;
+  }, 500);
+}
+function onMotion(pct){
+  const v = $('#camPreview'); const w = 480, h = Math.round(w * (v.videoHeight / v.videoWidth || 0.75));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d'); ctx.drawImage(v, 0, 0, w, h);
+  ctx.font = '500 16px monospace'; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(8, 8, 190, 26);
+  ctx.fillStyle = '#fff'; ctx.fillText(new Date().toLocaleString('zh-TW', { hour12:false }), 14, 27);
+  const ev = { time:Date.now(), pct, img:c.toDataURL('image/jpeg', 0.62) };
+  cam.events.push(ev); if(cam.events.length > 30) cam.events.shift();
+  addEventItem($('#camEvents'), ev, false);
+  broadcast({ t:'motion_evt', ev });
+}
+
+async function requestWake(){ try{ if(navigator.wakeLock) cam.wake = await navigator.wakeLock.request('screen'); }catch(e){} }
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'visible' && cam.active) requestWake(); });
+
+function stopCamera(){
+  cam.active = false; clearInterval(cam.loopT); stopSiren();
+  for(const id of [...cam.viewers.keys()]) dropViewer(id);
+  try{ cam.peer?.destroy(); }catch(e){} cam.peer = null;
+  cam.stream?.getTracks().forEach(t => t.stop()); cam.stream = null;
+  try{ cam.wake?.release(); }catch(e){}
+  $('#camPreview').srcObject = null;
+  show('home'); renderRecent();
+}
+
+$('#btnCam').onclick = startCamera;
+$('#camBack').onclick = stopCamera;
+$('#newPin').onclick = () => { store.set('camPin', randPin()); renderPairing(); toast('PIN 已更換，舊的觀看端需重新輸入'); };
+$('#camAuto').onchange = e => store.set('camAuto', e.target.checked);
+$('#dimBtn').onclick = () => { $('#dim').hidden = false; };
+$('#dim').ondblclick = () => { $('#dim').hidden = true; };
+let lastTap = 0;
+$('#dim').addEventListener('touchend', e => { const n = Date.now(); if(n - lastTap < 350){ $('#dim').hidden = true; e.preventDefault(); } lastTap = n; });
+window.addEventListener('beforeunload', e => { if(cam.active){ e.preventDefault(); e.returnValue = ''; } });
+
+/* =========================================================
+   觀看模式
+   ========================================================= */
+const vw = { active:false, peer:null, conn:null, call:null, remote:null, camId:null, pin:null, name:'',
+  micTrack:null, talking:false, recorder:null, chunks:[], recStart:0, retryT:null, ac:null, status:null };
+
+function renderRecent(){
+  const list = store.get('recentCams', []);
+  $('#recentWrap').hidden = !list.length;
+  const r = $('#recent'); r.innerHTML = '';
+  for(const it of list){
+    const row = document.createElement('div'); row.className = 'recent-item';
+    const go = document.createElement('button'); go.className = 'go';
+    go.innerHTML = `<b></b><span class="dim" style="font:13px var(--mono)">${fmtId(it.id).toUpperCase()}</span>`;
+    go.querySelector('b').textContent = it.name || '未命名攝影機';
+    go.onclick = () => { openViewer(it); connectViewer(); };
+    const x = document.createElement('button'); x.className = 'x'; x.textContent = '×'; x.setAttribute('aria-label', '移除');
+    x.onclick = () => { store.set('recentCams', store.get('recentCams', []).filter(c => c.id !== it.id)); renderRecent(); };
+    row.append(go, x); r.appendChild(row);
+  }
+}
+function saveRecent(){
+  const list = store.get('recentCams', []).filter(c => c.id !== vw.camId);
+  list.unshift({ id:vw.camId, pin:vw.pin, name:vw.name }); store.set('recentCams', list.slice(0, 8));
+}
+function openViewer(pre){
+  show('view');
+  $('#connForm').hidden = false; $('#live').hidden = true;
+  setPill($('#viewState'), '未連線');
+  $('#inId').value = pre?.id ? fmtId(pre.id) : '';
+  $('#inPin').value = pre?.pin || '';
+  $('#inName').value = pre?.name || '';
+}
+
+$('#btnView').onclick = () => openViewer();
+$('#connForm').onsubmit = e => {
+  e.preventDefault();
+  const id = normId($('#inId').value), pin = $('#inPin').value.trim();
+  if(id.length !== 6){ toast('攝影機代碼是 6 個字元'); return; }
+  if(!/^\d{4}$/.test(pin)){ toast('PIN 是 4 位數字'); return; }
+  vw.camId = id; vw.pin = pin; vw.name = $('#inName').value.trim();
+  connectViewer();
+};
+
+function connectViewer(){
+  if(!window.Peer){ toast('連線元件載入失敗，請檢查網路後重新整理'); return; }
+  if(vw.camId == null){ vw.camId = normId($('#inId').value); vw.pin = $('#inPin').value.trim(); vw.name = $('#inName').value.trim(); }
+  vw.active = true;
+  try{ vw.ac = vw.ac || new (window.AudioContext || window.webkitAudioContext)(); vw.ac.resume?.(); }catch(e){}
+  if('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
+  $('#connForm').hidden = true; $('#live').hidden = false;
+  $('#camName').textContent = vw.name || fmtId(vw.camId).toUpperCase();
+  $('#viewEvents').innerHTML = '<li class="empty">尚無事件</li>';
+  $('#liveWait').hidden = false; $('#liveWait').textContent = '連線中…';
+  setPill($('#viewState'), '連線中', 'warn');
+  ensureViewerPeer().then(openConn);
+}
+
+function ensureViewerPeer(){
+  return new Promise(res => {
+    const p0 = vw.peer;
+    if(p0 && !p0.destroyed && p0.open) return res();
+    if(p0 && !p0.destroyed && !p0.disconnected){ p0.once('open', () => res()); return; }
+    try{ p0?.destroy(); }catch(e){}
+    const p = new Peer({ debug:1 }); vw.peer = p;
+    p.on('open', () => res());
+    p.on('call', onCamCall);
+    p.on('error', e => {
+      if(!vw.active) return;
+      if(e.type === 'peer-unavailable') scheduleRetry('攝影機離線');
+      else { try{ p.destroy(); }catch(_){} scheduleRetry('網路異常'); }
+    });
+    p.on('disconnected', () => { if(!p.destroyed && vw.active) setTimeout(() => { if(!p.destroyed) p.reconnect(); }, 2000); });
+  });
+}
+
+function openConn(){
+  if(!vw.active) return;
+  const oldc = vw.conn; vw.conn = null; try{ oldc?.close(); }catch(e){}
+  const conn = vw.peer.connect(PREFIX + vw.camId, { metadata:{ pin:vw.pin }, reliable:true });
+  vw.conn = conn;
+  conn.on('data', d => { if(conn === vw.conn) onViewData(d); });
+  conn.on('close', () => { if(conn === vw.conn && vw.active) scheduleRetry('連線中斷'); });
+  conn.on('error', () => { if(conn === vw.conn && vw.active) scheduleRetry('連線中斷'); });
+}
+
+function scheduleRetry(msg){
+  if(!vw.active || vw.retryT) return;
+  setPill($('#viewState'), msg + '，5 秒後重試', 'err');
+  $('#liveWait').hidden = false; $('#liveWait').textContent = msg + '，自動重新連線中…';
+  try{ vw.call?.close(); }catch(e){} vw.call = null;
+  vw.retryT = setTimeout(() => { vw.retryT = null; if(vw.active) ensureViewerPeer().then(openConn); }, 5000);
+}
+
+function silentStream(){
+  try{ return vw.ac.createMediaStreamDestination().stream; }
+  catch(e){ return new MediaStream(); }
+}
+
+function onCamCall(call){
+  if(call.peer !== PREFIX + vw.camId){ call.close(); return; }
+  try{ vw.call?.close(); }catch(e){}
+  vw.call = call;
+  call.answer(silentStream());
+  call.on('stream', rs => {
+    vw.remote = rs;
+    const v = $('#liveVideo'); v.srcObject = rs; v.play().catch(() => {});
+    $('#liveWait').hidden = true;
+    setPill($('#viewState'), '即時影像', 'on');
+    if(vw.micTrack) replaceMic(vw.micTrack);
+  });
+  call.on('close', () => { if(call === vw.call && vw.active) scheduleRetry('影像中斷'); });
+}
+
+function onViewData(d){
+  if(!d || typeof d !== 'object') return;
+  switch(d.t){
+    case 'denied':
+      vw.active = false; teardownViewer();
+      openViewer({ id:vw.camId, name:vw.name });
+      setPill($('#viewState'), 'PIN 錯誤', 'err'); toast('PIN 錯誤，請到攝影機那支手機確認');
+      break;
+    case 'hello':
+      saveRecent(); $('#liveWait').textContent = '已配對，等待影像…'; setPill($('#viewState'), '已配對', 'warn'); break;
+    case 'status': applyStatus(d); break;
+    case 'events': (d.list || []).forEach(ev => addEventItem($('#viewEvents'), ev, false)); break;
+    case 'motion_evt': onMotionEvt(d.ev); break;
+    case 'toast': toast(d.msg); break;
+  }
+}
+
+function applyStatus(s){
+  vw.status = s;
+  $('#mOn').checked = !!s.motion?.on;
+  $('#mSens').value = s.motion?.sens ?? 50; $('#mSensTxt').textContent = $('#mSens').value;
+  $('#cTorch').setAttribute('aria-pressed', String(!!s.torch));
+  $('#cSiren').setAttribute('aria-pressed', String(!!s.siren));
+  $('#vBatt').textContent = s.battery ? `電量 ${s.battery.level}%${s.battery.charging ? ' ⚡' : ''}` : '';
+  $('#vBatt').hidden = !s.battery;
+}
+
+function onMotionEvt(ev){
+  addEventItem($('#viewEvents'), ev, true);
+  if(navigator.vibrate) navigator.vibrate([200, 100, 200]);
+  try{
+    const ac = vw.ac, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.value = 880; g.gain.setValueAtTime(0.15, ac.currentTime); g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
+    o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.4);
+  }catch(e){}
+  if(document.hidden && 'Notification' in window && Notification.permission === 'granted'){
+    try{ new Notification('偵測到移動', { body:(vw.name || '攝影機') + '　' + hhmmss(ev.time), icon:ev.img, tag:'motion' }); }catch(e){}
+  }
+}
+
+function send(msg){ try{ if(vw.conn?.open) vw.conn.send(msg); else toast('尚未連上攝影機'); }catch(e){} }
+
+/* 控制列 */
+$('#cSound').onclick = () => {
+  const v = $('#liveVideo'); v.muted = !v.muted;
+  $('#cSound').setAttribute('aria-pressed', String(!v.muted));
+  $('#cSound').querySelector('small').textContent = v.muted ? '已靜音' : '收音中';
+};
+async function replaceMic(track){
+  const s = vw.call?.peerConnection?.getSenders().find(x => x.track && x.track.kind === 'audio');
+  if(s) await s.replaceTrack(track).catch(() => {});
+}
+async function talkStart(e){
+  e.preventDefault(); vw.talking = true;
+  if(!vw.call){ toast('尚未連上攝影機'); return; }
+  if(!vw.micTrack){
+    try{ const s = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true } }); vw.micTrack = s.getAudioTracks()[0]; vw.micTrack.enabled = false; await replaceMic(vw.micTrack); }
+    catch(err){ toast('需要麥克風權限才能對講'); return; }
+  }
+  if(!vw.talking) return;
+  vw.micTrack.enabled = true; $('#cTalk').classList.add('active'); $('#cTalk').querySelector('small').textContent = '說話中…';
+}
+function talkEnd(){
+  vw.talking = false; if(vw.micTrack) vw.micTrack.enabled = false;
+  $('#cTalk').classList.remove('active'); $('#cTalk').querySelector('small').textContent = '按住說話';
+}
+$('#cTalk').addEventListener('pointerdown', talkStart);
+['pointerup','pointerleave','pointercancel'].forEach(ev => $('#cTalk').addEventListener(ev, talkEnd));
+$('#cTalk').addEventListener('contextmenu', e => e.preventDefault());
+
+$('#cRec').onclick = () => {
+  if(vw.recorder){ vw.recorder.stop(); return; }
+  if(!vw.remote || !window.MediaRecorder){ toast(window.MediaRecorder ? '尚無影像' : '此瀏覽器不支援錄影'); return; }
+  const types = ['video/mp4;codecs=avc1,mp4a','video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm','video/mp4'];
+  const mime = types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  let r; try{ r = new MediaRecorder(vw.remote, mime ? { mimeType:mime } : {}); }catch(e){ toast('無法開始錄影'); return; }
+  vw.chunks = [];
+  r.ondataavailable = e => { if(e.data.size) vw.chunks.push(e.data); };
+  r.onstop = () => {
+    const type = r.mimeType || mime || 'video/webm';
+    download(new Blob(vw.chunks, { type }), `監視器_${vw.name || vw.camId}_${stamp()}.${type.includes('mp4') ? 'mp4' : 'webm'}`);
+    vw.recorder = null; $('#recBadge').hidden = true; $('#cRec').setAttribute('aria-pressed', 'false');
+    $('#cRec').querySelector('small').textContent = '存到這支';
+  };
+  r.start(1000); vw.recorder = r; vw.recStart = Date.now();
+  $('#recBadge').hidden = false; $('#cRec').setAttribute('aria-pressed', 'true'); $('#cRec').querySelector('small').textContent = '再按停止';
+};
+$('#cShot').onclick = () => {
+  const v = $('#liveVideo'); if(!v.videoWidth){ toast('尚無影像'); return; }
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  const ctx = c.getContext('2d');
+  if($('#liveStage').classList.contains('night')) ctx.filter = 'brightness(1.9) contrast(1.35) grayscale(1)';
+  ctx.drawImage(v, 0, 0);
+  c.toBlob(b => { download(b, `截圖_${vw.name || vw.camId}_${stamp()}.jpg`); toast('已儲存截圖'); }, 'image/jpeg', 0.9);
+};
+$('#cFlip').onclick = () => { send({ t:'flip' }); toast('切換鏡頭中…'); };
+$('#cTorch').onclick = () => send({ t:'torch', on:$('#cTorch').getAttribute('aria-pressed') !== 'true' });
+$('#cSiren').onclick = () => send({ t:'siren', on:$('#cSiren').getAttribute('aria-pressed') !== 'true' });
+$('#cNight').onclick = () => {
+  const on = $('#liveStage').classList.toggle('night');
+  $('#cNight').setAttribute('aria-pressed', String(on));
+};
+$('#cFull').onclick = () => {
+  const st = $('#liveStage'), v = $('#liveVideo');
+  if(st.requestFullscreen) st.requestFullscreen().catch(() => v.webkitEnterFullscreen?.());
+  else if(v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+};
+const sendMotion = () => send({ t:'motion', on:$('#mOn').checked, sens:+$('#mSens').value });
+$('#mOn').onchange = sendMotion;
+$('#mSens').oninput = () => $('#mSensTxt').textContent = $('#mSens').value;
+$('#mSens').onchange = sendMotion;
+
+function teardownViewer(){
+  clearTimeout(vw.retryT); vw.retryT = null;
+  if(vw.recorder) vw.recorder.stop();
+  try{ vw.call?.close(); }catch(e){} vw.call = null;
+  const c = vw.conn; vw.conn = null; try{ c?.close(); }catch(e){}
+  vw.micTrack?.stop(); vw.micTrack = null;
+  vw.remote = null; $('#liveVideo').srcObject = null;
+}
+$('#viewBack').onclick = () => {
+  vw.active = false; teardownViewer();
+  try{ vw.peer?.destroy(); }catch(e){} vw.peer = null; vw.camId = null;
+  show('home'); renderRecent();
+};
+
+setInterval(() => {
+  $('#clock').textContent = hhmmss(Date.now());
+  if(vw.recorder){ const s = Math.floor((Date.now() - vw.recStart) / 1000); $('#recBadge').textContent = `● REC ${pad(Math.floor(s/60))}:${pad(s%60)}`; }
+}, 1000);
+
+/* ---------- 啟動 ---------- */
+(function init(){
+  renderRecent();
+  if(!window.isSecureContext) toast('請用 https 開啟，否則無法使用相機');
+  const q = new URLSearchParams(location.search);
+  const id = normId(q.get('cam') || ''), pin = q.get('pin') || '';
+  if(id.length === 6){
+    history.replaceState(null, '', location.pathname);
+    const saved = store.get('recentCams', []).find(c => c.id === id);
+    openViewer({ id, pin, name:saved?.name || '' });
+    if(/^\d{4}$/.test(pin)){ vw.camId = id; vw.pin = pin; vw.name = saved?.name || ''; connectViewer(); }
+    return;
+  }
+  if(store.get('camAuto', false)) startCamera();
+})();
+</script>
+</body>
+</html>
