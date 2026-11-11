@@ -368,6 +368,7 @@ function createCamPeer(){
       }
       cam.viewers.set(conn.peer, { conn, call:null });
       conn.send({ t:'hello' });
+      const tc = currentTurn(); if(tc) conn.send({ t:'turncfg', cfg:tc });
       conn.send({ t:'events', list:cam.events.slice(-10) });
       sendStatus(conn);
       callViewer(conn.peer);
@@ -704,6 +705,17 @@ function onViewData(d){
     case 'events': (d.list || []).forEach(ev => addEventItem($('#viewEvents'), ev, false)); break;
     case 'motion_evt': onMotionEvt(d.ev); break;
     case 'toast': toast(d.msg); break;
+    case 'turncfg': {
+      const c = d.cfg, mine = store.get('turn', null);
+      if(c && c.urls && (!mine || mine.urls !== c.urls || mine.user !== c.user || mine.pass !== c.pass)){
+        store.set('turn', { urls:c.urls, user:c.user || '', pass:c.pass || '' });
+        $('#tUrls').value = c.urls; $('#tUser').value = c.user || ''; $('#tPass').value = c.pass || '';
+        $('#tSrc').textContent = '目前使用：從攝影機同步的設定';
+        toast('已從攝影機同步 TURN 設定，下次跨網路也能連');
+        runTurnTest(store.get('turn', null), false);
+      }
+      break;
+    }
   }
 }
 
